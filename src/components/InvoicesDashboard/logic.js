@@ -1,58 +1,79 @@
-import {
-  getSqlRows,
-} from '../../database/utils'
-import { USERBASE_DATABASE_NAME } from '../../config'
+import {Deta} from 'deta'
 
-const sql_invoice_subtotal = 'SUM(quantity * unit_price) AS subtotal'
+const deta = Deta('YOUR_KEY_HERE'); 
+const invoices_db = deta.Base('invoices_db');
+const invoice_item_db = deta.Base('invoice_item_db');
 
-const sql_invoice_tax = '(100 + tax_percent) / 100'
-const sql_invoice_total = `SUM((subtotal - discount) * (${sql_invoice_tax}) + shipping) AS total`
+export const getInvoices = async () => {
+  var invoice = await invoices_db.fetch().next();
+  invoice = invoice.value
+  var invoice_item = await invoice_item_db.fetch().next();
+  invoice_item = invoice_item.value
 
-export const getInvoices = (sqlJsDb) => {
-  const sqlInvoiceSubtotals = `
-    SELECT
-      invoice.*,
-      invoice_uuid,  
-      ${sql_invoice_subtotal}
-    FROM
-      invoice
-    INNER JOIN
-      invoice_item ON invoice_item.invoice_uuid = invoice.uuid
-    GROUP BY
-      invoice_uuid
-  `
+  for (var i = 0; i < invoice.length; i++) {
+    var subtotal = 0;
+    for (var j = 0; j < invoice_item.length; j++) {
+      if (invoice[i].uuid === invoice_item[j].invoice_uuid) {
+        subtotal += (invoice_item[j].unit_price * invoice_item[j].quantity)
+      }
+    }
 
-  const sqlInvoiceTotals = `
-    SELECT
-      *,
-      ${sql_invoice_total}
-    FROM (${sqlInvoiceSubtotals})
-    GROUP BY invoice_uuid
-  `
+    var total = (subtotal - invoice[i].discount) * (100 + invoice[i].tax_percent) / 100 + invoice[i].shipping;
 
-  const sql = `
-    SELECT
-      invoice_with_total.*,
-      agent.name AS customer
-    FROM
-      (${sqlInvoiceTotals}) AS invoice_with_total
-    INNER JOIN
-      agent ON agent.uuid = invoice_with_total.payor_uuid
-    ORDER BY
-      invoice_with_total.created_date DESC
-  ;`
+    await invoices_db.put({
+      'uuid': invoice[i].uuid,
+      'key': invoice[i].key,
+      'date_issued': invoice[i].date_issued,
+      'date_due': invoice[i].date_due,
+      'currency': invoice[i].currency,
+      'discount': invoice[i].discount,
+      'tax_percent': invoice[i].tax_percent,
+      'shipping': invoice[i].shipping,
+      'note': invoice[i].note,
+      'payee_uuid': invoice[i].payee_uuid,
+      'payee_name': invoice[i].payee_name,
+      'payee_email': invoice[i].payee_email,
+      'payor_name': invoice[i].payor_name,
+      'payor_email': invoice[i].payor_email,
+      'payor_uuid': invoice[i].payor_uuid,
+      'subtotal': subtotal,
+      'total': total,
+      'created_date': invoice[i].created_date,
+      'date_paid': invoice[i].date_paid
+    })
+  }
 
-  return getSqlRows(sqlJsDb, sql)
+  invoice = await invoices_db.fetch().next();
+  invoice = invoice.value
+
+  function compare(a, b) {
+    const bandA = a.date_issued;
+    const bandB = b.date_issued;
+  
+    let comparison = 0;
+    if (bandA > bandB) {
+      comparison = -1;
+    } else if (bandA < bandB) {
+      comparison = 1;
+    }
+    return comparison;
+  }
+
+  invoice.sort(compare);
+  return invoice;
 }
 
-export const getInvoiceItems = (sqlJsDb, invoiceUuid) => {
-  const sql = `
-    SELECT *
-    FROM invoice_item
-    WHERE invoice_uuid = "${invoiceUuid}"
-    ORDER BY item_number ASC
-  ;`
-  return getSqlRows(sqlJsDb, sql)
+export const getInvoiceItems = async (invoiceUuid) => {
+  var invoice_items = await invoice_item_db.fetch().next();
+  invoice_items = invoice_items.value;
+  var output = [];
+  for (var i = 0; i < invoice_items.length; i++) {
+    if (invoice_items[i].invoice_uuid === invoiceUuid) {
+      output.push(invoice_items[i])
+    }
+  }
+
+  return output
 }
 
 export const getInvoiceObjectForExport = (invoice, invoiceItems) => {
@@ -78,7 +99,6 @@ export const getInvoiceObjectForExport = (invoice, invoiceItems) => {
     },
     items: invoiceItems.map((item) => {
       return {
-        itemNumber: item.item_number,
         name: item.item_name,
         quantity: item.quantity,
         unitPrice: item.unit_price
@@ -88,46 +108,26 @@ export const getInvoiceObjectForExport = (invoice, invoiceItems) => {
 }
 
 export const setDatePaid = async (invoiceUuid, datePaid) => {
-  await window.userbase.execSql({
-    databaseName: USERBASE_DATABASE_NAME,
-    sql: `
-      UPDATE invoice
-      SET date_paid = $date_paid
-      WHERE uuid = $uuid
-    ;`,
-    bindValues: {
-      $date_paid: datePaid ? datePaid.toISOString() : null,
-      $uuid: invoiceUuid
+  var invoices = await invoices_db.fetch().next();
+  invoices = invoices.value
+  for (var i = 0; i < invoices.length; i++) {
+    if (invoices[i].uuid === invoiceUuid) {
+      const res = await invoices_db.update({
+        'date_paid': datePaid ? datePaid.toISOString() : null
+      }, invoiceUuid)
     }
-  })
+  }
 }
 
 export const deleteInvoice = async (invoiceUuid) => {
-  const deleteInvoiceItems = {
-    sql: `
-      DELETE FROM invoice_item
-      WHERE invoice_uuid = $invoice_uuid
-    ;`,
-    bindValues: {
-      $invoice_uuid: invoiceUuid
+  var invoice_item = await invoice_item_db.fetch().next();
+  invoice_item = invoice_item.value
+
+  for (var i = 0; i < invoice_item.length; i++) {
+    if (invoice_item[i].invoice_uuid === invoiceUuid) {
+      const res = await invoice_item_db.delete(invoice_item[i].key)
     }
   }
 
-  const deleteInvoice = {
-    sql: `
-      DELETE FROM invoice
-      WHERE uuid = $uuid
-    ;`,
-    bindValues: {
-      $uuid: invoiceUuid
-    }
-  }
-
-  await window.userbase.execSql({
-    databaseName: USERBASE_DATABASE_NAME,
-    sqlStatements: [
-      deleteInvoiceItems,
-      deleteInvoice
-    ]
-  })
+  const res_temp = await invoices_db.delete(invoiceUuid)
 }

@@ -1,70 +1,91 @@
 import {
-  getSqlRows,
-} from '../../database/utils'
-import {
   getFirstDayOfMonth,
   getLastDayOfMonth,
   getMonthAsString,
 } from '../../utils'
 import { DEFAULT_CURRENCY } from '../../config'
+import {Deta} from 'deta'
+
+const deta = Deta('YOUR_KEY_HERE'); 
+const user_db = deta.Base('user_db');
+const invoices_db = deta.Base('invoices_db');
+const invoice_item_db = deta.Base('invoice_item_db');
 
 const DISPLAY_NUM_MONTHS = 3
 const DISPLAY_NUM_RANKS = 5
 
-export const getCurrency = (sqlJsDb, userId) => {
-  const sql = `SELECT currency FROM user WHERE uuid = "${userId}"`
-  const currencyRow = getSqlRows(sqlJsDb, sql)
+export const getCurrency = async (userId) => {
+  var users = await user_db.fetch().next();
+  users = users.value;
 
-  return currencyRow.length
-    ? currencyRow[0].currency
-    : DEFAULT_CURRENCY
+  for (var i = 0; i < users.length; i++) {
+    if (users[i].uuid === userId) {
+      return users[i].currency;
+    }
+  }
+
+  return DEFAULT_CURRENCY;
 }
 
-export const hasCreatedInvoice = (sqlJsDb) => {
-  const sql = `SELECT * FROM invoice LIMIT 1;`
-  return getSqlRows(sqlJsDb, sql).length > 0
+export const tempInvoices = async (userId) => {
+  const temp = await hasCreatedInvoice()
+  if (temp) {
+    const currency = await getCurrency(userId);
+    const monthlySales = await getMonthlySales(currency)
+    const salesByCustomer = await getSalesByCustomer(currency)
+    const salesByProduct = await getSalesByProduct(currency)
+    const { total, received, owed, overdue } = await getTotals(currency)
+    const customerCount = await getCustomerCount()
+    const suggestCreateInvoice = false;
+    return {
+      suggestCreateInvoice,
+      currency,
+      monthlySales,
+      salesByCustomer,
+      salesByProduct,
+      total,
+      received,
+      owed,
+      overdue,
+      customerCount,
+    }
+  } else {
+    return {
+      suggestCreateInvoice: true,
+      currency : "USD",
+      monthlySales : 0,
+      salesByCustomer : 0,
+      salesByProduct : 0,
+      total : 0,
+      received : 0,
+      owed : 0,
+      overdue : 0,
+      customerCount : 0,
+    }
+  }
 }
 
-const sql_item_amount = 'quantity * unit_price'
-const sql_invoice_subtotal = `SUM(${sql_item_amount}) AS subtotal`
-const sql_invoice_total_excluding_tax = 'SUM(subtotal - discount + shipping) AS invoice_total_excluding_tax'
-
-const sql_invoice_tax = '(100 + tax_percent) / 100'
-const sql_invoice_total = `SUM((subtotal - discount) * (${sql_invoice_tax}) + shipping) AS invoice_total`
-
-const _getSalesForMonth = (sqlJsDb, start, end, currency) => {
-  const sqlInvoiceSubtotalsForMonth = `
-    SELECT
-      ${sql_invoice_subtotal},
-      invoice_uuid,
-      discount,
-      shipping
-    FROM
-      invoice
-    INNER JOIN
-      invoice_item ON invoice_item.invoice_uuid = invoice.uuid
-    WHERE
-      invoice.date_issued BETWEEN "${start.toISOString()}" AND "${end.toISOString()}" AND 
-      invoice.currency = "${currency}"
-    GROUP BY
-      invoice_uuid
-  `
-
-  const sqlInvoiceTotalsForMonth = `
-    SELECT ${sql_invoice_total_excluding_tax}
-    FROM (${sqlInvoiceSubtotalsForMonth})
-    GROUP BY invoice_uuid
-  `
-
-  const sql = `
-    SELECT SUM(invoice_total_excluding_tax) AS sales
-    FROM (${sqlInvoiceTotalsForMonth});
-  `
-
-  return getSqlRows(sqlJsDb, sql)
+export const hasCreatedInvoice = async () => {
+  var invoice = await invoices_db.fetch().next();
+  invoice = invoice.value;
+  return invoice.length > 0;
 }
 
-export const getMonthlySales = (sqlJsDb, currency, lastNMonths = DISPLAY_NUM_MONTHS) => {
+const _getSalesForMonth = async (start, end, currency) => {
+  var invoices = await invoices_db.fetch().next();
+  invoices = invoices.value;
+  var total = 0;
+  for (var i = 0; i < invoices.length; i++) {
+    var dateIssued = new Date(invoices[i].date_issued)
+    if (start < dateIssued && end > dateIssued) {
+      total += invoices[i].total;
+    }
+  }
+
+  return [{'sales': total}];
+}
+
+export const getMonthlySales = async (currency, lastNMonths = DISPLAY_NUM_MONTHS) => {
   const currentDate = new Date()
 
   const sales = []
@@ -73,73 +94,19 @@ export const getMonthlySales = (sqlJsDb, currency, lastNMonths = DISPLAY_NUM_MON
   for (let i = 1; i <= lastNMonths; i++) {
     const start = getFirstDayOfMonth(currentDate, (lastNMonths - i) * -1)
     const end = getLastDayOfMonth(currentDate, (lastNMonths - i) * -1)
-
-    sales.push(_getSalesForMonth(sqlJsDb, start, end, currency)[0].sales)
+    var output = await _getSalesForMonth(start, end, currency);
+    sales.push(output[0].sales)
     months.push(getMonthAsString(start))
   }
 
   return { sales, months }
 }
 
-export const getSalesByCustomer = (sqlJsDb, currency) => {
-  const sqlInvoiceSubtotals = `
-    SELECT
-      ${sql_invoice_subtotal},
-      invoice_uuid,
-      payor_uuid,
-      discount,
-      shipping
-    FROM
-      invoice
-    INNER JOIN
-      invoice_item ON invoice_item.invoice_uuid = invoice.uuid
-    WHERE
-      invoice.currency = "${currency}"
-    GROUP BY
-      invoice_uuid
-  `
+export const getSalesByCustomer = async (currency) => {
+  var deta = await getSalesByCustomerDeta(currency);
+  const resultTopCustomers = deta[0]
+  const resultOtherCustomers = deta[1]
 
-  const sqlInvoiceTotals = `
-    SELECT
-      payor_uuid,
-      ${sql_invoice_total_excluding_tax}
-    FROM (${sqlInvoiceSubtotals})
-    GROUP BY invoice_uuid
-  `
-
-  const sqlSalesByCustomer = `
-    SELECT
-      agent.name AS customer,
-      SUM(invoice_total_excluding_tax) AS sales
-    FROM (${sqlInvoiceTotals})
-    INNER JOIN agent ON agent.uuid = payor_uuid
-    GROUP BY payor_uuid
-    ORDER BY sales DESC
-  `
-
-  const sqlRanks = `
-    SELECT
-      *,
-      RANK() OVER (ORDER BY sales DESC) AS rank
-    FROM (${sqlSalesByCustomer})  
-  `
-
-  const sqlTopCustomers = `
-    SELECT *
-    FROM (${sqlRanks})
-    WHERE rank <= ${DISPLAY_NUM_RANKS}
-  ;`
-
-  const sqlOtherCustomers = `
-    SELECT
-      "Others" AS customer,     
-      SUM(sales) AS sales
-    FROM (${sqlRanks})
-    WHERE rank > ${DISPLAY_NUM_RANKS}
-  ;`
-
-  const resultTopCustomers = getSqlRows(sqlJsDb, sqlTopCustomers)
-  const resultOtherCustomers = getSqlRows(sqlJsDb, sqlOtherCustomers)
   const result = resultOtherCustomers[0].sales
     ? resultTopCustomers.concat(resultOtherCustomers)
     : resultTopCustomers
@@ -150,52 +117,73 @@ export const getSalesByCustomer = (sqlJsDb, currency) => {
   return { sales, customers }
 }
 
-export const getSalesByProduct = (sqlJsDb, currency) => {
-  const sqlInvoiceItemAmounts = `
-    SELECT
-      (${sql_item_amount}) AS item_amount,
-      resource_uuid
-    FROM
-      invoice
-    INNER JOIN
-      invoice_item ON invoice_item.invoice_uuid = invoice.uuid
-    WHERE
-      invoice.currency = "${currency}"
-  `
+export const getSalesByCustomerDeta = async (currency) => {
+  var invoices = await invoices_db.fetch().next();
+  invoices = invoices.value;
+  var map = new Map();
+  var array = [];
+  var output = [];
 
-  const sqlSalesByProduct = `
-    SELECT
-      resource.name AS product,
-      SUM(item_amount) AS sales
-    FROM (${sqlInvoiceItemAmounts})
-    INNER JOIN resource ON resource.uuid = resource_uuid
-    GROUP BY resource_uuid
-    ORDER BY sales DESC
-  `
+  for (var i = 0; i < invoices.length; i++) {
+    if (map.has(invoices[i].payor_uuid)) {
+      var prev = map.get(invoices[i].payor_uuid);
+      var obj = {};
+      obj['customer'] = prev['customer'];
+      obj['sales'] = prev['sales'] + invoices[i].total;
+      map.set(invoices[i].payor_uuid, obj)
+    } else {
+      var obj = {};
+      obj['customer'] = invoices[i].payor_name;
+      obj['sales'] = invoices[i].total;
+      map.set(invoices[i].payor_uuid, obj)
+    }
+  }
 
-  const sqlRanks = `
-    SELECT
-      *,
-      RANK() OVER (ORDER BY sales DESC) AS rank
-    FROM (${sqlSalesByProduct})  
-  `
+  map.forEach((value, key) => {
+    array.push({'customer': value.customer, 'sales': value.sales});
+  })
 
-  const sqlTopProducts = `
-    SELECT *
-    FROM (${sqlRanks})
-    WHERE rank <= ${DISPLAY_NUM_RANKS}
-  ;`
+  function compare(a, b) {
+    const bandA = a.sales;
+    const bandB = b.sales;
+  
+    let comparison = 0;
+    if (bandA > bandB) {
+      comparison = -1;
+    } else if (bandA < bandB) {
+      comparison = 1;
+    }
+    return comparison;
+  }
 
-  const sqlOtherProducts = `
-    SELECT
-      "Others" AS product,     
-      SUM(sales) AS sales
-    FROM (${sqlRanks})
-    WHERE rank > ${DISPLAY_NUM_RANKS}
-  ;`
+  array.sort(compare);
 
-  const resultTopProducts = getSqlRows(sqlJsDb, sqlTopProducts)
-  const resultOtherProducts = getSqlRows(sqlJsDb, sqlOtherProducts)
+  var others = 0;
+  var first = false;
+  var other = [];
+
+  for (var i = 0; i < array.length; i++) {
+    if (i < DISPLAY_NUM_RANKS) {
+      output.push({'customer': array[i].customer, 'sales': array[i].sales, 'rank': i + 1});
+    } else {
+      first = true;
+      others += array[i].sales;
+    }
+  }
+
+  other.push({
+    'customer': "Others",
+    'sales': first ? others : null
+  })
+
+  return [output, other];
+}
+
+export const getSalesByProduct = async (currency) => {
+  const output = await getSalesByProductDeta(currency);
+  const resultTopProducts = output[0]
+  const resultOtherProducts = output[1]
+
   const result = resultOtherProducts[0].sales
     ? resultTopProducts.concat(resultOtherProducts)
     : resultTopProducts
@@ -206,77 +194,97 @@ export const getSalesByProduct = (sqlJsDb, currency) => {
   return { sales, products }
 }
 
-export const getTotals = (sqlJsDb, currency) => {
-  const sqlInvoiceSubtotals = `
-    SELECT    
-      invoice_uuid,
-      date_due,
-      date_paid,
-      discount,
-      tax_percent,
-      shipping,
-      ${sql_invoice_subtotal}
-    FROM
-      invoice
-    INNER JOIN
-      invoice_item ON invoice_item.invoice_uuid = invoice.uuid
-    WHERE
-      invoice.currency = "${currency}"
-    GROUP BY
-      invoice_uuid
-  `
+export const getSalesByProductDeta = async (currency) => {
+  var invoice_item = await invoice_item_db.fetch().next();
+  invoice_item = invoice_item.value;
+  var map = new Map();
+  var array = [];
+  var output = [];
 
-  const sqlInvoiceTotals = `
-    SELECT
-      date_due,
-      date_paid,      
-      ${sql_invoice_total}
-    FROM (${sqlInvoiceSubtotals})
-    GROUP BY invoice_uuid
-  `
+  for (var i = 0; i < invoice_item.length; i++) {
+    if (map.has(invoice_item[i].item_name.toLowerCase())) {
+      var prev = map.get(invoice_item[i].item_name.toLowerCase());
+      var obj = {
+        'product': prev['product'],
+        'sales': prev['sales'] + invoice_item[i].unit_price * invoice_item[i].quantity
+      };
+      map.set(invoice_item[i].item_name.toLowerCase(), obj)
+    } else {
+      var obj = {
+        'product': invoice_item[i].item_name,
+        'sales': invoice_item[i].unit_price * invoice_item[i].quantity
+      };
+      map.set(invoice_item[i].item_name.toLowerCase(), obj)
+    }
+  }
+  
+  map.forEach((value, key) => {
+    array.push({'product': value.product, 'sales': value.sales});
+  })
 
-  const dateToday = new Date().toISOString()
-  const sql = `
-    SELECT
-      SUM(invoice_total) AS total,
-      SUM(
-        CASE
-          WHEN date_paid IS NOT NULL
-          THEN invoice_total
-          ELSE 0
-        END
-      ) AS received,
-      SUM(
-        CASE
-          WHEN date_paid IS NULL
-          THEN invoice_total
-          ELSE 0
-        END
-      ) AS owed,
-      SUM(
-        CASE
-          WHEN 
-            date_paid IS NULL AND
-            date_due IS NOT NULL AND
-            date_due < "${dateToday}"
-          THEN invoice_total
-          ELSE 0
-        END
-      ) AS overdue
-    FROM (${sqlInvoiceTotals})
-  ;`
+  function compare(a, b) {
+    const bandA = a.sales;
+    const bandB = b.sales;
+  
+    let comparison = 0;
+    if (bandA > bandB) {
+      comparison = -1;
+    } else if (bandA < bandB) {
+      comparison = 1;
+    }
+    return comparison;
+  }
 
-  const result = getSqlRows(sqlJsDb, sql)
-  return result[0]
+  array.sort(compare);
+
+  var others = 0;
+  var first = false;
+  var other = [];
+
+  for (var i = 0; i < array.length; i++) {
+    if (i < DISPLAY_NUM_RANKS) {
+      output.push({'product': array[i].product, 'sales': array[i].sales, 'rank': i + 1});
+    } else {
+      first = true;
+      others += array[i].sales;
+    }
+  }
+
+  other.push({
+    'product': "Others",
+    'sales': first ? others : null
+  })
+
+  return [output, other];
 }
 
-export const getCustomerCount = (sqlJsDb) => {
-  const sql = `
-    SELECT COUNT(DISTINCT agent.uuid) AS count
-    FROM agent
-    INNER JOIN invoice ON invoice.payor_uuid = agent.uuid
-  ;`
+export const getTotals = async (currency) => {
+  var invoices = await invoices_db.fetch().next();
+  invoices = invoices.value;
+  var received = 0;
+  var owed = 0;
+  var overdue = 0;
+  var total = 0;
+  const dateToday = new Date().toISOString()
 
-  const result = getSqlRows(sqlJsDb, sql)
-  return result[0].count
+  for (var i = 0; i < invoices.length; i++) {
+    total += invoices[i].total;
+    received += invoices[i].date_paid ? invoices[i].total : 0;
+    owed += invoices[i].date_paid ? 0 : invoices[i].total;
+    overdue += invoices[i].date_due && invoices[i].date_paid === null && invoices[i].date_due < dateToday ? invoices[i].total : 0;
+  }
+
+  return {'total': total, 'received': received, 'owed': owed, 'overdue': overdue};
+}
+
+export const getCustomerCount = async () => {
+  var invoices = await invoices_db.fetch().next();
+  invoices = invoices.value;
+
+  var total = new Set();
+  for (var i = 0; i < invoices.length; i++) {
+    total.add(invoices[i].payor_uuid);
+  }
+
+  return total.size;
 }

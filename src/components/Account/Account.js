@@ -15,7 +15,7 @@ export default class Account extends Component {
 
     this.state = {
       username,
-      currency: getCurrency(sqlJsDb, userId) || DEFAULT_CURRENCY,
+      currency: getCurrency(userId) || DEFAULT_CURRENCY,
       loadingUpdateAccount: false,
       errorUpdateAccount: undefined,
       loadingUpdatePassword: false,

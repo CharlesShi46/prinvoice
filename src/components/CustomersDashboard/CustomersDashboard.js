@@ -12,8 +12,14 @@ export default class CustomersDashboard extends Component {
     super(props)
 
     this.state = {
-      customers: getCustomers(this.props.sqlJsDb, this.props.user.userId)
+      customers: []
     }
+  }
+  
+  componentDidMount() {
+    getCustomers(this.props.user.userId).then((data) => {
+      this.setState({customers: data})
+    })
   }
 
   render() {

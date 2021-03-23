@@ -9,10 +9,14 @@ import {
   numberToNumberString,
   downloadFileLocally,
 } from '../../utils'
-import {
-  setCreatedDateOnSqlStatements,
-  getSqlRows,
-} from '../../database/utils'
+import {Deta} from 'deta'
+
+const deta = Deta('YOUR_KEY_HERE'); 
+const invoices_db = deta.Base('invoices_db');
+const invoice_item_db = deta.Base('invoice_item_db');
+const resource_db = deta.Base('resource_db');
+const agent_db = deta.Base('agent_db');
+const user_db = deta.Base('user_db');
 
 class DetailedErrors extends Error {
   constructor(errors, errorMap) {
@@ -22,8 +26,9 @@ class DetailedErrors extends Error {
   }
 }
 
-export const newEmptyInvoice = (sqlJsDb, user) => {
-  const userDefaults = { ...getUserDefaults(sqlJsDb, user.userId) }
+export const newEmptyInvoice = async (user) => {
+  const data = await getUserDefaults(user)
+  const userDefaults = {...data}
   const { name, currency } = userDefaults
 
   return {
@@ -249,38 +254,34 @@ export const downloadInvoicePdf = async (invoice) => {
   downloadFileLocally(pdf)
 }
 
-export const getUserDefaults = (sqlJsDb, userId) => {
-  const sql = `
-    SELECT *
-    FROM user
-    WHERE uuid = '${userId}';
-  `
+export const getUserDefaults = async (userId) => {
+  var users = await user_db.fetch().next();
+  users = users.value;
 
-  const userDefaults = getSqlRows(sqlJsDb, sql)
+  for (var i = 0; i < users.length; i++) {
+    if (users[i].uuid === userId) {
+      return users[i];
+    }
+  }
 
-  if (userDefaults.length) return userDefaults[0]
-  else return {}
+  return {};
 }
 
-export const getCustomers = (sqlJsDb) => {
-  const sql = `
-    SELECT *
-    FROM agent;
-  `
+export const getCustomers = async () => {
+  var agent = await agent_db.fetch().next();
+  agent = agent.value;
 
-  return getSqlRows(sqlJsDb, sql)
+  return agent;
 }
 
-export const getProducts = (sqlJsDb) => {
-  const sql = `
-    SELECT *
-    FROM resource;
-  `
+export const getProducts = async () => {
+  var resource = await resource_db.fetch().next();
+  resource = resource.value;
 
- return getSqlRows(sqlJsDb, sql)
+  return resource;
 }
 
-const _insertInvoice = (invoice) => {
+const _insertInvoice = (invoice, payorUuid) => {
   const {
     uuid,
     payee,
@@ -294,131 +295,91 @@ const _insertInvoice = (invoice) => {
     note,
   } = invoice
 
-  const payorUuid = `
-    SELECT uuid
-    FROM agent
-    WHERE name = $payor_name COLLATE NOCASE
-  `
-
-  return {
-    sql:`
-      INSERT INTO invoice (
-        uuid,
-        date_issued, date_paid, date_due,
-        currency, discount, tax_percent, shipping, note,
-        payee_uuid, payee_name, payee_email,
-        payor_uuid, payor_name, payor_email,
-        created_date
-      )
-      VALUES (
-        $uuid, $date_issued, $date_paid, $date_due,
-        $currency, $discount, $tax_percent, $shipping, $note,
-        $payee_uuid, $payee_name, $payee_email,
-        (${payorUuid}), $payor_name, $payor_email,
-        $created_date
-      );
-    `,
-    bindValues: {
-      $uuid: uuid,
-      $date_issued: new Date(dateIssued).toISOString(),
-      $date_due: dateDue ? new Date(dateDue).toISOString() : null,
-      $currency: currency,
-      $discount: discount,
-      $tax_percent: taxPercent,
-      $shipping: shipping,
-      $note: note,
-      $payee_uuid: payee.userId,
-      $payee_name: payee.name,
-      $payee_email: payee.email,
-      $payor_name: payor.name,
-      $payor_email: payor.email
-    }
+  var output = {
+    'uuid': uuid,
+    'key': uuid,
+    'created_date': new Date(dateIssued).toISOString(),
+    'date_issued': new Date(dateIssued).toISOString(),
+    'date_paid': null,
+    'date_due': dateDue ? new Date(dateDue).toISOString() : null,
+    'currency': currency,
+    'discount': parseInt(discount),
+    'tax_percent': parseInt(taxPercent),
+    'shipping': parseInt(shipping),
+    'note': note,
+    'payee_uuid': payee.userId,
+    'payee_name': payee.name,
+    'payee_email': payee.email,
+    'payor_name': payor.name,
+    'payor_email': payor.email,
+    'payor_uuid': payorUuid,      
+    'subtotal': 0,
+    'total': 0,
   }
+
+  invoices_db.put(output)
+  return output
 }
 
-const _insertItem = (invoiceUuid, item, itemNumber) => {
+const _insertItem = (invoiceUuid, item, itemNumber, resourceUuid) => {
   const { name, unitPrice, quantity } = item
 
-  const resourceUuid = `
-    SELECT uuid
-    FROM resource
-    WHERE name = $item_name COLLATE NOCASE
-  `
-  return {
-    sql: `
-      INSERT INTO invoice_item (invoice_uuid, item_number, item_name, quantity, unit_price, created_date, resource_uuid)
-      VALUES ($invoice_uuid, $item_number, $item_name, $quantity, $unit_price, $created_date, (${resourceUuid}));
-    `,
-    bindValues: {
-      $invoice_uuid: invoiceUuid,
-      $item_number: itemNumber,
-      $item_name: name,
-      $unit_price: unitPrice,
-      $quantity: quantity,
-    }
+  var output = {
+    'invoice_uuid': invoiceUuid,
+    'item_name': name,
+    'unit_price': parseInt(unitPrice),
+    'quantity': quantity
   }
+
+  invoice_item_db.put(output)
+  return output
 }
 
 const _upsertResource = (item) => {
   const { resourceUuid, name, unitPrice } = item
-  return {
-    sql: `
-      INSERT INTO resource (uuid, name, unit_price, created_date)
-      VALUES ($uuid, $name, $unit_price, $created_date)
-      ON CONFLICT DO NOTHING;
-    `,
-    bindValues: {
-      $uuid: resourceUuid,
-      $name: name,
-      $unit_price: unitPrice,
-    }
+  
+  var output = {
+    'uuid': resourceUuid,
+    'key': resourceUuid,
+    'name': name,
+    'unit_price': parseInt(unitPrice)
   }
+
+  resource_db.put(output)
+  return output
 }
 
 const _upsertPayor = (payor) => {
-  return {
-    sql: `
-      INSERT INTO agent (uuid, name, email, created_date)
-      VALUES ($uuid, $name, $email, $created_date)
-      ON CONFLICT DO NOTHING;
-    `,
-    bindValues: {
-      $uuid: payor.uuid,
-      $name: payor.name,
-      $email: payor.email
-    }
+  var output = {
+    'uuid': payor.uuid,
+    'key': payor.uuid,
+    'name': payor.name,
+    'email': payor.email
   }
+
+  agent_db.put(output)
+  return output
 }
 
 const _upsertUserDefaultSettings = (payee, currency) => {
-  return {
-    sql: `
-      INSERT INTO user (uuid, name, currency, created_date)
-      VALUES ($uuid, $name, $currency, $created_date)
-      ON CONFLICT(uuid) DO NOTHING;
-    `,
-    bindValues: {
-      $uuid: payee.userId,
-      $name: payee.name,
-      $currency: currency
-    }
+  var output = {
+    'uuid': payee.userId,
+    'key': payee.userId,
+    'name': payee.name,
+    'currency': currency, 
+    'created_date': new Date().toISOString()
   }
+
+  user_db.put(output)
+  return output
 }
 
 export const createInvoice = async (invoice) => {
   const upsertUserDefaults = _upsertUserDefaultSettings(invoice.payee, invoice.currency)
   const upsertPayor = _upsertPayor(invoice.payor)
   const upsertResources = invoice.items.map(item => _upsertResource(item))
-  const insertItems = invoice.items.map((item, i) => _insertItem(invoice.uuid, item, i))
-  const insertInvoice = _insertInvoice(invoice)
-
-  const sqlStatements = setCreatedDateOnSqlStatements([
-    upsertUserDefaults,
-    upsertPayor,
-    ...upsertResources,
-    ...insertItems,
-    insertInvoice,
-  ])
-
-  await window.userbase.execSql({ databaseName: USERBASE_DATABASE_NAME, sqlStatements })
+  var resources = await resource_db.fetch().next();
+  resources = resources.value
+  const insertItems = invoice.items.map((item) => _insertItem(invoice.uuid, item))
+  const insertInvoice = _insertInvoice(invoice, upsertPayor.uuid)
 }

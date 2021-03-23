@@ -1,19 +1,12 @@
-import {
-  USERBASE_DATABASE_NAME
-} from '../../config'
+import { Deta } from 'deta'
 
-export const updateDefaultCurrency = async (userId, currency) => {
-  const sql = `
-    INSERT INTO user (uuid, currency, created_date)
-    VALUES ($uuid, $currency, $created_date)
-    ON CONFLICT(uuid) DO UPDATE SET currency=excluded.currency;
-  `
+const deta = Deta('YOUR_KEY_HERE'); 
+const user_db = deta.Base('user_db');
 
-  const bindValues = {
-    $uuid: userId,
-    $currency: currency,
-    $created_date: new Date().toISOString()
-  }
-
-  await window.userbase.execSql({ databaseName: USERBASE_DATABASE_NAME, sql, bindValues })
+export const updateDefaultCurrency = (userId) => {
+  user_db.put({
+    'uuid': userId,
+    'key': userId,
+    'created_date': new Date().toISOString()
+  })
 }

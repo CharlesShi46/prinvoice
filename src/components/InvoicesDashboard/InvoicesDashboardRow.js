@@ -31,7 +31,8 @@ export default class InvoicesDashboardRow extends Component {
       editingDatePaid: false,
       datePaidInEditMode: this.props.invoice.date_paid || new Date(),
       loading: false,
-      rowMenuOpen: false
+      rowMenuOpen: false,
+      datePaid: this.props.invoice.date_paid
     }
 
     this.datePaidEditor = React.createRef()
@@ -100,20 +101,10 @@ export default class InvoicesDashboardRow extends Component {
     const { loading } = this.state
     if (loading) return
 
-    const { date_paid } = this.props.invoice
-
-    // no need to push changes to server
-    if (datePaid === date_paid) {
-      this.setState({ editingDatePaid: false })
-      handleUpdatingRowStatus(false)
-      return
-    }
-
     try {
       const finalDatePaid = datePaid === null ? datePaid : new Date(datePaid)
       if (finalDatePaid !== null && !isValidDate(finalDatePaid)) return
-      this.setState({ loading: true })
-
+      this.setState({datePaid: finalDatePaid})
       await setDatePaid(invoiceUuid, finalDatePaid)
     } catch {
       // swallow error
@@ -130,16 +121,16 @@ export default class InvoicesDashboardRow extends Component {
     this.setState({ rowMenuOpen: !rowMenuOpen })
   }
 
-  handleEmailInvoiceLink = () => {
+  handleEmailInvoiceLink = async () => {
     const { invoice, sqlJsDb } = this.props
-    const invoiceItems = getInvoiceItems(sqlJsDb, invoice.uuid)
+    const invoiceItems = await getInvoiceItems(invoice.uuid)
     const invoiceObject = getInvoiceObjectForExport(invoice, invoiceItems)
     window.location.href = emailInvoiceLink(invoiceObject)
   }
 
   handleDownloadInvoicePdf = async () => {
     const { invoice, sqlJsDb } = this.props
-    const invoiceItems = getInvoiceItems(sqlJsDb, invoice.uuid)
+    const invoiceItems = await getInvoiceItems(invoice.uuid)
     const invoiceObject = getInvoiceObjectForExport(invoice, invoiceItems)
     await downloadInvoicePdf(invoiceObject)
   }
@@ -148,6 +139,7 @@ export default class InvoicesDashboardRow extends Component {
     const { invoice: { uuid }} = this.props
     try {
       await deleteInvoice(uuid)
+      this.props.handleUpdate()
     } catch {
       // swallow error
     }
@@ -159,7 +151,7 @@ export default class InvoicesDashboardRow extends Component {
       updatingRowStatus
      } = this.props
     const {
-      customer,
+      payor_name,
       date_due,
       date_paid,
       currency,
@@ -169,18 +161,19 @@ export default class InvoicesDashboardRow extends Component {
       editingDatePaid,
       datePaidInEditMode,
       loading,
-      rowMenuOpen
+      rowMenuOpen,
+      datePaid
     } = this.state
-
+    
     return (
       <tr>
-        <td className='invoice-dashboard-row-customer'>{customer}</td>
+        <td className='invoice-dashboard-row-customer'>{payor_name}</td>
         <td className='invoice-dashboard-row-date-due'><span className='invoice-dashboard-row-due-prefix'>Due: </span>{date_due ? new Date(date_due).toLocaleDateString() : '-'}</td>
-        <td className={'invoice-dashboard-date-paid' + (date_paid ? ' paid' : '') + ((updatingRowStatus && !editingDatePaid) ? ' editing-another-date-paid' : '')}>
+        <td className={'invoice-dashboard-date-paid' + (datePaid ? ' paid' : '') + ((updatingRowStatus && !editingDatePaid) ? ' editing-another-date-paid' : '')}>
           { loading
             ? <div className='loader'></div>
             : (!editingDatePaid
-              ? <span onClick={this.handleEditDatePaid}>{date_paid ? 'Paid' : 'Unpaid'}</span>
+              ? <span onClick={this.handleEditDatePaid}>{datePaid ? 'Paid' : 'Unpaid'}</span>
               : <div ref={this.datePaidEditor}>
                 <input
                   className='text-input validity'
@@ -202,10 +195,10 @@ export default class InvoicesDashboardRow extends Component {
           <div id='invoice-dashboard-ellipsis-dropdown-wrapper'>
             <div className={'dropdown' + (rowMenuOpen ? ' active' : '')}>
               <div className='dropdown-content'>
-                <div className='dropdown-item' onClick={this.handleEditDatePaid}>Mark as {date_paid ? 'unpaid' : 'paid'}<span className='float-right'>{currencySymbolMap[currency]}</span></div>
+                <div className='dropdown-item' onClick={this.handleEditDatePaid}>Mark as {datePaid ? 'unpaid' : 'paid'}<span className='float-right'>{currencySymbolMap[currency]}</span></div>
                 <div className='dropdown-divider' />
-                <div className='dropdown-item' onClick={this.handleEmailInvoiceLink}>Send<span className='float-right'><FontAwesomeIcon icon={faEnvelope} /></span></div>
-                <div className='dropdown-item' onClick={this.handleDownloadInvoicePdf}>Download PDF<span className='float-right'><FontAwesomeIcon icon={faFilePdf} /></span></div>
+                <div className='dropdown-item' onClick={()=>{this.handleEmailInvoiceLink().then()}}>Send<span className='float-right'><FontAwesomeIcon icon={faEnvelope} /></span></div>
+                <div className='dropdown-item' onClick={()=>{this.handleDownloadInvoicePdf().then()}}>Download PDF<span className='float-right'><FontAwesomeIcon icon={faFilePdf} /></span></div>
                 <div className='dropdown-divider' />
                 <div className='dropdown-item dangerous-hover' onClick={this.handleDeleteInvocie}>Delete<span className='float-right'><FontAwesomeIcon icon={faTrashAlt} /></span></div>
               </div>

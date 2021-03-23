@@ -16,6 +16,25 @@ export default class UserForm extends Component {
     }
   }
 
+  async componentDidMount() {
+      const { mode, handleSignIn } = this.props
+      const { username, password, loading } = this.state
+  
+      if (loading) return
+      this.setState({ loading: true, error: undefined })
+  
+      try {
+        const user = await (mode === 'sign-up'
+          ? window.userbase.signUp({ username: 'anonymous@gmail.com', password:'123456', rememberMe: 'local', email: 'anonymous@gmail.com' })
+          : window.userbase.signIn({ username: 'anonymous@gmail.com', password: '123456', rememberMe: 'local' })
+        )
+  
+        await handleSignIn(user)
+      } catch (e) {
+        this.setState({ error: e.message, loading: false })
+      }
+  }
+
   handleInputChange = (event) => {
     if (this.state.error) this.setState({ error: undefined })
 

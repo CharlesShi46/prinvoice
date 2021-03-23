@@ -10,6 +10,7 @@ import Dashboard from './components/Dashboard/Dashboard'
 import { hasCreatedInvoice } from './components/Dashboard/logic'
 import Account from './components/Account/Account'
 import { downloadFileLocally, importFile } from './utils.js'
+import { v4 as uuidv4 } from 'uuid'
 
 class App extends Component {
   constructor(props) {
@@ -18,8 +19,7 @@ class App extends Component {
     this.state = {
       mode: undefined,
       user: undefined,
-      lastUsedUsername: undefined,
-      sqlJsDb: undefined
+      lastUsedUsername: undefined
     }
   }
 
@@ -27,19 +27,22 @@ class App extends Component {
     window.addEventListener('hashchange', this.handleReadHash, false)
 
     try {
-      const session = await window.userbase.init({ appId: USERBASE_APP_ID, updateUserHandler: this.handleSetUser })
+      const session = {
+        user: {
+          authToken: "",
+          creationDate: "",
+          email: "anonymous@gmail.com",
+          paymentsMode: "disabled",
+          userId: uuidv4(),
+          username: "anonymous@gmail.com"
+        }
+      }
 
       // check if user is signed in
       if (session.user) await this.loadData()
 
       this.setState({ ...session })
     } catch (e) {
-      try {
-        await window.userbase.signOut()
-      } catch {
-        // swallow error
-      }
-
       localStorage.clear()
 
       console.error(e)
@@ -49,15 +52,13 @@ class App extends Component {
     this.handleReadHash()
   }
 
-  loadData = async () => {
-    const changeHandler = ({ db }) => this.setState({ sqlJsDb: db })
-    await init(changeHandler)
-  }
+  loadData = async () => {}
 
   handleSignIn = async (user) => {
     await this.loadData()
     this.setState({ user })
     window.location.hash = ''
+    console.log(user)
   }
 
   handleSetUser = (userResult) => {
@@ -69,7 +70,6 @@ class App extends Component {
     this.setState({
       lastUsedUsername,
       user: undefined,
-      sqlJsDb: undefined,
       mode: undefined
     })
     window.location.hash = 'sign-in'
@@ -80,9 +80,7 @@ class App extends Component {
   }
 
   getDefaultSignedInMode = () => {
-    const { sqlJsDb } = this.state
-    if (!sqlJsDb) return
-    return this.setState({ mode: hasCreatedInvoice(sqlJsDb) ? 'dashboard': 'invoices' })
+    return this.setState({ mode: hasCreatedInvoice() ? 'dashboard': 'invoices' })
   }
 
   handleReadHash = () => {
@@ -118,13 +116,7 @@ class App extends Component {
     }
   }
 
-  handleDownloadData = () => {
-    const { sqlJsDb } = this.state
-    const data = sqlJsDb.export()
-    const filename = `Prinvoice_backup-${new Date().toLocaleDateString()}.db`
-    const file = new File([data], filename, { type: 'application/vnd.sqlite3' })
-    downloadFileLocally(file)
-  }
+  handleDownloadData = () => {}
 
   handleImportData = () => {
     const fileExtension = navigator.userAgent.match('CriOS')
@@ -153,7 +145,6 @@ class App extends Component {
     const {
       user,
       lastUsedUsername,
-      sqlJsDb,
       mode
     } = this.state
 
@@ -190,27 +181,23 @@ class App extends Component {
             case 'new-invoice':
               return <NewInvoiceForm
                 user={user}
-                sqlJsDb={sqlJsDb}
               />
 
             case 'invoices':
               return <InvoicesDashboard
                 key={Math.random()} // re-renders on change to sqlJsDb
                 user={user}
-                sqlJsDb={sqlJsDb}
               />
 
             case 'customers':
               return <CustomersDashboard
                 key={Math.random()} // re-renders on change to sqlJsDb
                 user={user}
-                sqlJsDb={sqlJsDb}
               />
 
             case 'account':
               return <Account
                 user={user}
-                sqlJsDb={sqlJsDb}
                 handleResetState={this.handleResetState}
               />
 
@@ -219,7 +206,6 @@ class App extends Component {
               return <Dashboard
                 key={Math.random()} // re-renders on change to sqlJsDb
                 user={user}
-                sqlJsDb={sqlJsDb}
               />
           }
         })()}

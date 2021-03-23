@@ -9,26 +9,32 @@ export default class InvoicesDashboard extends Component {
     super(props)
 
     this.state = {
-      invoices: getInvoices(this.props.sqlJsDb),
+      invoices: [],
       error: undefined,
       loading: false,
       updatingRowStatus: false
     }
   }
 
+  handleUpdate = () => {
+    getInvoices().then((data) => {
+      this.setState({invoices: data}) 
+    })
+  }
+
   componentDidMount() {
     this._isMounted = true
+    this.handleUpdate();
   }
 
   componentWillUnmount() {
     this._isMounted = false
   }
 
-
   handleUpdatingRowStatus = (updatingRowStatus) => {
     if (this._isMounted) this.setState({ updatingRowStatus })
   }
-
+  
   render() {
     const {
       invoices,
@@ -56,6 +62,7 @@ export default class InvoicesDashboard extends Component {
                   {invoices.map(invoice => <InvoicesDashboardRow
                     key={invoice.uuid}
                     invoice={invoice}
+                    handleUpdate={this.handleUpdate}
                     handleUpdatingRowStatus={this.handleUpdatingRowStatus}
                     updatingRowStatus={updatingRowStatus}
                     sqlJsDb={this.props.sqlJsDb}

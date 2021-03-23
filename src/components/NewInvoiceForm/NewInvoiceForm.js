@@ -37,10 +37,21 @@ export default class NewInvoiceForm extends Component {
       errors: [],
       errorMap: { items: {}, payor: {}, payee: {} },
       loading: false,
-      invoice: newEmptyInvoice(this.props.sqlJsDb, this.props.user),
+      invoice: {    
+        uuid: "",
+        dateIssued: new Date(),
+        dateDue: new Date(),
+        items: [],
+        payor: {uuid: "" },
+        payee: {name: '' },
+        currency: "USD",
+        discount: 0,
+        taxPercent: 0,
+        shipping: 0,
+        note: '',},
       editingTax: false,
-      customerDropdownOptions: getCustomers(this.props.sqlJsDb),
-      productDropdownOptions: getProducts(this.props.sqlJsDb),
+      customerDropdownOptions: [],
+      productDropdownOptions: [],
       customerDropdownOpen: false,
       moreOptionsOpen: false
     }
@@ -57,6 +68,15 @@ export default class NewInvoiceForm extends Component {
     document.addEventListener('mousedown', this.handleClickOutsideCustomersDropdown)
     document.addEventListener('mousedown', this.handleClickOutsideMoreOptionsDropdown)
     document.addEventListener('keydown', this.handleHitEnter)
+    newEmptyInvoice(this.props.user).then(data => {
+      this.setState({invoice: data})
+      getCustomers().then(data => {
+        this.setState({customerDropdownOptions: data})
+        getProducts().then(data => {
+          this.setState({productDropdownOptions: data})
+        })
+      })
+    })
   }
 
   componentWillUnmount() {
@@ -313,7 +333,7 @@ export default class NewInvoiceForm extends Component {
                   onChange={(e) => this.handleUpdateAgent('payee', 'name', e.target.value)}
                 />
 
-                <div className='input-padding input-font-size pr-0'>{payee.email}</div>
+                <div className='input-padding input-font-size pr-0'></div>
               </div>
 
               <div className='invoice-form-bill-to'>
@@ -423,8 +443,11 @@ export default class NewInvoiceForm extends Component {
 
                     { (() => {
                       const chosenProducts = {}
+                      
                       for (let i = 0; i < items.length; i++) {
-                        chosenProducts[items[i].resourceUuid] = true
+                        if (items[i].resourceUuid !== undefined) {
+                          chosenProducts[items[i].resourceUuid] = true
+                        }
                       }
 
                       return items.map((item, i) => {

@@ -63,20 +63,6 @@ export default class NavBar extends Component {
 
         <ul className='topnav max-screen-width'>
 
-          <li className={'dropdown' + (menuOpen ? ' active': '')} ref={this.menuWrapperRef} id='topnav-dropdown-menu'>
-            <div className='dropbtn' onClick={this.handleToggleMenu}><FontAwesomeIcon icon={faBars} /></div>
-            <div className='dropdown-content'>
-              <div className='dropdown-item' onClick={() => window.location.href = '#account'}><div style={{ textDecoration: 'underline' }}>{user.username}<span className='float-right'><FontAwesomeIcon icon={faUser} /></span></div></div>
-              <div className='dropdown-divider' />
-              <div className='dropdown-item' onClick={this.props.handleDownloadData}>Download all of your data<span className='float-right'><FontAwesomeIcon icon={faDownload} /></span></div>
-              <div className='dropdown-item' onClick={this.props.handleImportData}>Restore your data from download<span style={{ marginLeft: '2em' }} className='float-right'><FontAwesomeIcon icon={faUpload} /></span></div>
-              <div className='dropdown-divider' />
-              <div className='dropdown-item' onClick={() => window.location.href = 'mailto:support@prinvoice.com'}>Contact support@prinvoice.com</div>
-              <div className='dropdown-divider' />
-              <div className='dropdown-item dangerous-hover' onClick={this.handleSignOut}>Sign out</div>
-            </div>
-          </li>
-
           <li className='desktop-topnav-item'><a className={'topnav-item' + (mode === 'dashboard' ? ' active' : '')} href='#dashboard'>DASHBOARD</a></li>
           <li className='desktop-topnav-item'><a className={'topnav-item' + (mode === 'invoices' ? ' active' : '')} href='#invoices'>INVOICES</a></li>
           <li className='desktop-topnav-item'><a className={'topnav-item' + (mode === 'customers' ? ' active' : '')} href='#customers'>CUSTOMERS</a></li>

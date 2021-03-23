@@ -1,80 +1,36 @@
-import {
-  getSqlRows,
-} from '../../database/utils'
+import {Deta} from 'deta'
 
-const sql_invoice_subtotal = (userId) =>  `
-  SUM(
-    CASE 
-      WHEN invoice.currency = (SELECT currency FROM user WHERE uuid = "${userId}")
-      THEN (quantity * unit_price)
-      ELSE 0
-    END
-  ) AS subtotal
-`
+const deta = Deta('YOUR_KEY_HERE'); 
+const invoices_db = deta.Base('invoices_db');
 
-const sql_invoice_tax = '(100 + tax_percent) / 100'
-const sql_invoice_total = (userId) => `
-  SUM(
-    CASE
-      WHEN currency = (SELECT currency FROM user WHERE uuid = "${userId}")
-      THEN ((subtotal - discount) * (${sql_invoice_tax}) + shipping)
-      ELSE 0
-    END
-  ) AS total
-`
+export const getCustomers = async () => {
+  var invoices = await invoices_db.fetch().next();
+  invoices = invoices.value
+  let map = new Map()
 
-export const getCustomers = (sqlJsDb, userId) => {
-  const sqlInvoiceSubtotals = `
-    SELECT    
-      invoice_uuid,
-      payor_uuid,
-      date_paid,
-      discount,
-      tax_percent,
-      shipping,
-      currency,
-      ${sql_invoice_subtotal(userId)}
-    FROM
-      invoice
-    INNER JOIN
-      invoice_item ON invoice_item.invoice_uuid = invoice.uuid
-    GROUP BY
-      invoice_uuid
-  `
+  for (var i = 0; i < invoices.length; i++) {
+    if (map.has(invoices[i].payor_uuid)) {
+      var prev = map.get(invoices[i].payor_uuid);
+      var obj = {
+        'customer': prev['customer'],
+        'email': prev['email'],
+        'currency': prev['currency'],
+        'amount_received': (invoices[i].date_paid ? invoices[i].total : 0) + prev['amount_received'],
+        'amount_owes': (invoices[i].date_paid ? 0 : invoices[i].total) + prev['amount_owes']
+      };
+      map.set(invoices[i].payor_uuid, obj)
+    } else {
+      var obj = {
+        'customer': invoices[i].payor_name,
+        'email': invoices[i].payor_email ? invoices[i].payor_email : null,
+        'currency': invoices[i].currency,
+        'amount_received': invoices[i].date_paid ? invoices[i].total : 0,
+        'amount_owes': invoices[i].date_paid ? 0 : invoices[i].total
+      };
+      map.set(invoices[i].payor_uuid, obj)
+    }
+  }
 
-  const sqlInvoiceTotals = `
-    SELECT
-      payor_uuid,
-      date_paid,
-      ${sql_invoice_total(userId)}
-    FROM (${sqlInvoiceSubtotals})
-    GROUP BY invoice_uuid
-  `
-
-  const sql = `
-    SELECT
-      agent.name AS customer,
-      agent.email,
-      (SELECT currency FROM user WHERE uuid = "${userId}") AS currency,
-      SUM(
-        CASE
-          WHEN date_paid IS NOT NULL
-          THEN total
-          ELSE 0
-        END
-      ) AS amount_received,
-      SUM(
-        CASE
-          WHEN date_paid IS NULL
-          THEN total
-          ELSE 0
-        END
-      ) AS amount_owes
-    FROM (${sqlInvoiceTotals})
-    INNER JOIN agent ON agent.uuid = payor_uuid
-    GROUP BY payor_uuid
-    ORDER BY LOWER(customer) ASC
-  `
-
-  return getSqlRows(sqlJsDb, sql)
-}
+  let values = Array.from(map.values());
+  return values;
+} 

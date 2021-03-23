@@ -7,34 +7,30 @@ import {
   numberToNumberString,
 } from '../../utils'
 import {
-  getCurrency,
-  getMonthlySales,
-  getSalesByCustomer,
-  getSalesByProduct,
-  hasCreatedInvoice,
-  getTotals,
-  getCustomerCount,
+  tempInvoices
 } from './logic'
 
 export default class Dashboard extends Component {
   constructor(props) {
     super(props)
-
-    const {
-      sqlJsDb,
-      user
-    } = this.props
-    const { userId } = user
-
-    if (hasCreatedInvoice(sqlJsDb)) {
-      const currency = getCurrency(sqlJsDb, userId)
-      const monthlySales = getMonthlySales(sqlJsDb, currency)
-      const salesByCustomer = getSalesByCustomer(sqlJsDb, currency)
-      const salesByProduct = getSalesByProduct(sqlJsDb, currency)
-      const { total, received, owed, overdue } = getTotals(sqlJsDb, currency)
-      const customerCount = getCustomerCount(sqlJsDb)
-
-      this.state = {
+    this.state = {
+      suggestCreateInvoice: false,
+      currency : "USD",
+      monthlySales : 0,
+      salesByCustomer : 0,
+      salesByProduct : 0,
+      total : 0,
+      received : 0,
+      owed : 0,
+      overdue : 0,
+      customerCount : 0,
+    }
+  }
+  
+  componentDidMount() {
+    tempInvoices(this.props.user.userId).then(data => {
+      const {
+        suggestCreateInvoice,
         currency,
         monthlySales,
         salesByCustomer,
@@ -44,12 +40,21 @@ export default class Dashboard extends Component {
         owed,
         overdue,
         customerCount,
-      }
-    } else {
-      this.state = {
-        suggestCreateInvoice: true
-      }
-    }
+      } = data;
+      this.setState({
+        suggestCreateInvoice,
+        currency,
+        monthlySales,
+        salesByCustomer,
+        salesByProduct,
+        total,
+        received,
+        owed,
+        overdue,
+        customerCount,
+      })
+    
+    })
   }
 
   render() {
